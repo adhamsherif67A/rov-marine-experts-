@@ -1,0 +1,78 @@
+import rclpy
+from rclpy.node import Node
+import cv2
+import os
+import glob
+import numpy as np
+import pyzed.sl as sl
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+
+class ZEDCameraNode(Node):
+    def __init__(self):
+        super().__init__('zed_camera_node')
+        self.publisher_ = self.create_publisher(Image, 'zed_images', 10)
+        self.timer = self.create_timer(0.1, self.capture_image)
+        self.bridge = CvBridge()
+        self.zed = sl.Camera()
+        self.init_camera()
+    
+    def init_camera(self):
+        init_params = sl.InitParameters()
+        init_params.camera_resolution = sl.RESOLUTION.HD1080
+        init_params.camera_fps = 30
+        if self.zed.open(init_params) != sl.ERROR_CODE.SUCCESS:
+            self.get_logger().error("Could not open ZED 2i camera.")
+            return
+        self.get_logger().info("ZED 2i camera initialized.")
+    
+    def capture_image(self):
+        image = sl.Mat()
+        if self.zed.grab(sl.RuntimeParameters()) == sl.ERROR_CODE.SUCCESS:
+            self.zed.retrieve_image(image, sl.VIEW.LEFT)
+            frame = image.get_data()
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
+            self.publisher_.publish(msg)
+            self.get_logger().info("Image published.")
+    
+    def destroy_node(self):
+        self.zed.close()
+        super().destroy_node()
+
+class PanoramaStitchingNode(Node):
+    def __init__(self):
+        super().__init__('panorama_stitching_node')
+        self.subscription = self.create_subscription(Image, 'zed_images', self.image_callback, 10)
+        self.bridge = CvBridge()
+        self.image_list = []
+        self.image_dir = 'images'
+        os.makedirs(self.image_dir, exist_ok=True)
+    
+    def image_callback(self, msg):
+        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        img_path = os.path.join(self.image_dir, f"image_{len(self.image_list)}.jpg")
+        cv2.imwrite(img_path, frame)
+        self.image_list.append(img_path)
+        if len(self.image_list) >= 5:  # Minimum images for panorama
+            self.stitch_panorama()
+    
+    def stitch_panorama(self):
+        images = [cv2.imread(img) for img in self.image_list]
+        stitcher = cv2.Stitcher_create(cv2.Stitcher_PANORAMA)
+        (status, panorama) = stitcher.stitch(images)
+        if status == cv2.Stitcher_OK:
+            panorama_path = 'panorama.jpg'
+            cv2.imwrite(panorama_path, panorama)
+            self.get_logger().info(f"Panorama created: {panorama_path}")
+        else:
+            self.get_logger().error("Failed to create panorama.")
+
+rclpy.init()
+zed_node = ZEDCameraNode()
+pano_node = PanoramaStitchingNode()
+rclpy.spin(zed_node)
+rclpy.spin(pano_node)
+zed_node.destroy_node()
+pano_node.destroy_node()
+rclpy.shutdown()

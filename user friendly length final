@@ -1,0 +1,144 @@
+import pyzed.sl as sl
+import cv2
+import numpy as np
+import math
+import time
+
+# Initialize ZED 2i Camera
+zed = sl.Camera()
+
+init_params = sl.InitParameters()
+init_params.camera_resolution = sl.RESOLUTION.HD720  # Best performance at 60 FPS
+init_params.depth_mode = sl.DEPTH_MODE.PERFORMANCE  # Optimize for speed
+init_params.coordinate_units = sl.UNIT.METER  # Use meters
+init_params.camera_fps = 60  # Request 60 FPS
+init_params.depth_maximum_distance = 5  # Limit depth for better accuracy
+init_params.depth_stabilization = 0  # Disable stabilization for real-time performance
+init_params.enable_image_enhancement = False  # Reduce processing overhead
+
+# Open the camera
+if zed.open(init_params) != sl.ERROR_CODE.SUCCESS:
+    print("❌ Failed to open ZED 2i camera")
+    exit()
+
+# Get actual camera FPS
+actual_fps = zed.get_camera_fps()
+print(f"✅ Running at {actual_fps} FPS")
+
+# Enable positional tracking (for better depth accuracy)
+tracking_params = sl.PositionalTrackingParameters()
+tracking_params.enable_area_memory = True
+zed.enable_positional_tracking(tracking_params)
+
+# Setup runtime parameters
+runtime_parameters = sl.RuntimeParameters()
+
+# Image and depth containers
+image_left = sl.Mat()
+point_cloud = sl.Mat()
+clicked_points = []
+mouse_x, mouse_y = 0, 0
+measured_distance = None
+last_feedback = ""
+
+# Timer for FPS measurement
+prev_time = time.time()
+frame_count = 0
+fps_display = "FPS: ..."
+
+# Mouse callback function
+def get_3d_point(event, x, y, flags, param):
+    global clicked_points, mouse_x, mouse_y, measured_distance, last_feedback
+
+    if event == cv2.EVENT_MOUSEMOVE:
+        mouse_x, mouse_y = x, y
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        err_code, point = point_cloud.get_value(x, y)
+
+        if err_code == sl.ERROR_CODE.SUCCESS and len(point) >= 3:
+            x3D, y3D, z3D = point[:3]
+
+            if not any(math.isnan(v) or math.isinf(v) for v in (x3D, y3D, z3D)):
+                clicked_points.append((x, y, x3D, y3D, z3D))
+                last_feedback = "✅ Point selected!"
+
+                if len(clicked_points) == 2:
+                    p1, p2 = clicked_points
+                    measured_distance = math.sqrt((p2[2] - p1[2])**2 +
+                                                  (p2[3] - p1[3])**2 +
+                                                  (p2[4] - p1[4])**2)
+
+                    last_feedback = f"📏 Measured: {measured_distance:.3f} meters"
+                    clicked_points.clear()
+            else:
+                last_feedback = "❌ Invalid depth, try another point!"
+
+# Setup OpenCV window and mouse callback
+cv2.namedWindow("ZED 2i Measurement Tool")
+cv2.setMouseCallback("ZED 2i Measurement Tool", get_3d_point)
+
+# Main loop
+while True:
+    if zed.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
+        # Retrieve images
+        zed.retrieve_image(image_left, sl.VIEW.LEFT)  
+        zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA)  
+
+        img = image_left.get_data()
+        img = np.copy(img)
+
+        # Update FPS counter
+        frame_count += 1
+        if frame_count >= 30:
+            current_time = time.time()
+            fps_display = f"FPS: {frame_count / (current_time - prev_time):.1f}"
+            prev_time = current_time
+            frame_count = 0
+
+        # Draw crosshair at mouse position
+        err_code, point = point_cloud.get_value(mouse_x, mouse_y)
+        crosshair_color = (0, 255, 0) if err_code == sl.ERROR_CODE.SUCCESS else (0, 0, 255)
+        cv2.drawMarker(img, (mouse_x, mouse_y), crosshair_color, cv2.MARKER_CROSS, 15, 2)
+
+        # Draw clicked points
+        for i, (u, v, _, _, _) in enumerate(clicked_points):
+            color = (0, 255, 0) if i == 0 else (0, 0, 255)
+            cv2.circle(img, (u, v), 8, color, -1)
+            cv2.putText(img, f"P{i+1}", (u + 10, v - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+        # Display instructions
+        cv2.putText(img, "Click two points to measure distance", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(img, "Press 'r' to reset | 'u' to undo | 'q' to exit", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        # Display measured distance
+        if measured_distance is not None:
+            cv2.putText(img, f"Distance: {measured_distance:.3f}m", (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # Display FPS
+        cv2.putText(img, fps_display, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 0), 2)
+
+        # Display feedback message
+        if last_feedback:
+            cv2.putText(img, last_feedback, (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 200), 2)
+
+        cv2.imshow("ZED 2i Measurement Tool", img)
+
+    # Keyboard controls
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):  # Quit
+        break
+    elif key == ord('r'):  # Reset all points
+        clicked_points.clear()
+        measured_distance = None
+        last_feedback = "🔄 Reset all points!"
+    elif key == ord('u'):  # Undo last point
+        if clicked_points:
+            clicked_points.pop()
+            last_feedback = "↩️ Undid last selection!"
+
+cv2.destroyAllWindows()
+zed.close()

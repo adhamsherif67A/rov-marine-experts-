@@ -125,3 +125,5 @@ while True:
 
 cv2.destroyAllWindows()
 zed.close()
+
+// el code da akher code we shaghal error 2cm

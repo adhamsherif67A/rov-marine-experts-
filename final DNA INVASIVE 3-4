@@ -1,0 +1,91 @@
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Use Seaborn theme for professional aesthetics
+sns.set_style("whitegrid")
+
+# Reference sequences for different types of invasive carp (from provided files)
+reference_sequences = {
+    "Black Carp": "ACACCACGTTCTTTGACCCAGCAGGCGGAGGAGACCCAATCCTATATCAACACCTGTTCTGATTCTTCGGCCACCCAGAAGTTTACATTCTTATTTTACCCGGGTTTGGGATCATTTCAC",
+    "Bighead Carp": "AACTTAAATAAACAGATTATTCCACTAACAATTGATTCTCAAATTTATTACTGAATTATTAACTAAAATCTAACTCAAGTATATTATTAAAGTAAGAGACCACCTACTTATTTATATTAAGGTATTATATTCATGATAAGATCAAGGACAATAACAGTGGGGGTGGCGCAAAATGAACTATTACTTGCATCTGGTTTGGAATCTCACGGACATGGCTACAAAATTCCACCCCCGTTACATTATAACTGGCATATGGTTAAATGATGTGAGTACATACTCCTCATTAACCCCACATGCCGAGCATTCTTTTAT",
+    "Silver Carp": "CCTGAGAAAAGAGTTGTTCCACTATAATTGGTTCTCAAATATTTCCTTGAAATATTAACTTCTATTTAATTTAACTATATTAATGTAGTAAGAAACCACCTACTGGTTTATATTAAGGTATTCTATTCATGATAAGATCAGGGACAATAATCGTGGGGGTGGCGCAGAATGAACTATTACTTGCATTTGGC",
+    "Grass Carp": "GAGTTTCTGACTTCTACCCCCTTCTTTCCTCCTACTATTAGCCTCTTCTGGTGTTGAGGCCGGAGCTGGAACAGGGTGAACAG"
+}
+
+
+def find_partial_match(edna_seq, reference_seqs):
+    """Find partial matches between an eDNA sequence and reference carp samples."""
+    for carp_type, ref_seq in reference_seqs.items():
+        if ref_seq in edna_seq:  # Check if the reference sequence is a substring of the eDNA sequence
+            return carp_type
+    return "No Match"
+
+
+def get_user_edna_samples():
+    """Get unknown eDNA samples from the user."""
+    edna_samples = {}
+    print("Enter unknown eDNA samples. Type 'done' on a new line when finished:")
+
+    while True:
+        sample_id = input("Sample ID (or 'done'): ")
+        if sample_id.lower() == 'done':
+            break
+        print("Enter DNA sequence. Type 'END' on a new line when finished:")
+        sequence_lines = []
+        while True:
+            line = input().strip()
+            if line.upper() == "END":
+                break
+            sequence_lines.append(line)
+        sequence = "".join(sequence_lines).upper().replace(" ", "").replace("\n", "")
+        edna_samples[sample_id] = sequence
+
+    return edna_samples
+
+
+def plot_results(results):
+    """Plot the classification results as a professional bar chart."""
+    sample_ids = list(results.keys())
+    match_status = [1 if results[sample] != "No Match" else 0 for sample in sample_ids]
+    colors = ['#1f77b4' if match else '#d62728' for match in match_status]  # Blue for match, Red for no match
+
+    plt.figure(figsize=(12, 6))
+    bars = plt.bar(sample_ids, [1] * len(sample_ids), color=colors, width=0.5, edgecolor='black')
+
+    for bar, sample_id in zip(bars, sample_ids):
+        label = results[sample_id] if results[sample_id] != "No Match" else "No Match"
+        plt.text(bar.get_x() + bar.get_width() / 2, 1.05, label,
+                 ha='center', va='bottom', fontsize=12)
+
+    plt.title("eDNA Sample Classification for Invasive Carp Detection", fontsize=16)
+    plt.ylabel("Detection Status")
+    plt.xticks(rotation=45)
+    plt.yticks([])  # Hide y-ticks
+    plt.ylim(0, 1.5)
+    plt.grid(False)
+    plt.legend([plt.Rectangle((0, 0), 1, 1, color='#1f77b4'),
+                plt.Rectangle((0, 0), 1, 1, color='#d62728')],
+               ["Match", "No Match"], loc="upper right", fontsize=12)
+    plt.show()
+
+
+def main():
+    # Get unknown eDNA samples
+    edna_samples = get_user_edna_samples()
+
+    # Find partial matches for each sample
+    results = {sample_id: find_partial_match(seq, reference_sequences) for sample_id, seq in edna_samples.items()}
+
+    # Print classification results
+    if results:
+        for sample_id, classification in results.items():
+            print(f"Sample '{sample_id}' classified as: {classification}")
+    else:
+        print("No samples provided.")
+
+    # Display the results as a graph
+    plot_results(results)
+
+
+if __name__ == "__main__":
+    main()
